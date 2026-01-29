@@ -28,8 +28,8 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/suncreation/postgresql-mcp-server"
-"Repository" = "https://github.com/suncreation/postgresql-mcp-server"
+"Homepage" = "https://github.com/SunCreation/postgresql-mcp-server"
+"Repository" = "https://github.com/SunCreation/postgresql-mcp-server"
 
 [project.scripts]
 postgresql-mcp-server = "postgresql_mcp_server:main"

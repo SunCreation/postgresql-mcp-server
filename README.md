@@ -71,7 +71,7 @@ If you've published to GitHub, you can use:
   "mcp": {
     "postgresql": {
       "type": "local",
-      "command": ["uvx", "--from", "git+https://github.com/suncreation/postgresql-mcp-server", "postgresql-mcp-server"],
+      "command": ["uvx", "--from", "git+https://github.com/SunCreation/postgresql-mcp-server", "postgresql-mcp-server"],
       "enabled": true,
       "environment": {
         "PG_HOST": "localhost",
@@ -132,7 +132,7 @@ Once configured in OpenCode, you can ask the AI:
 
 ```bash
 # Clone the repository
-git clone https://github.com/suncreation/postgresql-mcp-server.git
+git clone https://github.com/SunCreation/postgresql-mcp-server.git
 cd postgresql-mcp-server
 
 # Install dependencies
