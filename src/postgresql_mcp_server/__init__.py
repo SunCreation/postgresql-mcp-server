@@ -1,8 +1,10 @@
 """PostgreSQL MCP Server - A Model Context Protocol server for PostgreSQL databases."""
 
 import asyncio
+import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Optional
 
 import psycopg
@@ -10,15 +12,80 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
+# Config file path
+CONFIG_DIR = Path.home() / ".config" / "postgresql-mcp"
+CONFIG_FILE = CONFIG_DIR / "connections.json"
+
+# Current active connection profile
+_current_profile: Optional[str] = None
+_connections: dict[str, dict[str, Any]] = {}
+
 # Initialize FastMCP server
 mcp = FastMCP(
     "postgresql-mcp-server",
-    instructions="PostgreSQL database server. Use tools to query databases, list tables, and explore schemas.",
+    instructions="""PostgreSQL database server with multi-connection support.
+
+FIRST TIME SETUP:
+1. Use 'save_connection' to save your database credentials with a profile name
+2. Use 'use_connection' to activate a profile
+3. Then use other tools to query the database
+
+MANAGING CONNECTIONS:
+- save_connection: Save new DB credentials with a profile name
+- list_connections: Show all saved connection profiles  
+- use_connection: Switch to a specific profile
+- delete_connection: Remove a saved profile
+- get_current_connection: Show which profile is active
+
+QUERYING:
+- test_connection: Test if current connection works
+- list_databases, list_schemas, list_tables: Explore DB structure
+- describe_table: Get column details
+- run_query: Execute SELECT queries
+- run_sql: Execute any SQL (careful!)
+""",
 )
 
 
+def load_connections() -> dict[str, dict[str, Any]]:
+    """Load saved connections from config file."""
+    global _connections
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                data = json.load(f)
+                _connections = data.get("connections", {})
+                return _connections
+        except Exception:
+            pass
+    return {}
+
+
+def save_connections() -> None:
+    """Save connections to config file."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump({"connections": _connections}, f, indent=2)
+    # Secure the file (owner read/write only)
+    os.chmod(CONFIG_FILE, 0o600)
+
+
 def get_connection_params() -> dict[str, Any]:
-    """Get database connection parameters from environment variables."""
+    """Get database connection parameters from current profile or environment."""
+    global _current_profile, _connections
+
+    # First check if we have an active profile
+    if _current_profile and _current_profile in _connections:
+        conn = _connections[_current_profile]
+        return {
+            "host": conn.get("host", "localhost"),
+            "port": int(conn.get("port", 5432)),
+            "dbname": conn.get("database", "postgres"),
+            "user": conn.get("user", "postgres"),
+            "password": conn.get("password", ""),
+        }
+
+    # Fall back to environment variables
     return {
         "host": os.environ.get("PG_HOST", "localhost"),
         "port": int(os.environ.get("PG_PORT", "5432")),
@@ -26,15 +93,6 @@ def get_connection_params() -> dict[str, Any]:
         "user": os.environ.get("PG_USER", "postgres"),
         "password": os.environ.get("PG_PASSWORD", ""),
     }
-
-
-def get_connection_string() -> str:
-    """Build connection string from environment variables."""
-    params = get_connection_params()
-    return (
-        f"postgresql://{params['user']}:{params['password']}"
-        f"@{params['host']}:{params['port']}/{params['dbname']}"
-    )
 
 
 async def execute_query(query: str, params: Optional[tuple] = None) -> list[dict[str, Any]]:
@@ -60,6 +118,207 @@ async def execute_command(query: str, params: Optional[tuple] = None) -> int:
             return cur.rowcount
 
 
+# ============================================================
+# CONNECTION MANAGEMENT TOOLS
+# ============================================================
+
+
+@mcp.tool(
+    description="Save database connection credentials with a profile name. Credentials are stored securely in ~/.config/postgresql-mcp/connections.json",
+    annotations=ToolAnnotations(title="Save Connection"),
+)
+def save_connection(
+    profile_name: str = Field(
+        description="Name for this connection profile (e.g., 'production', 'staging', 'local')"
+    ),
+    host: str = Field(description="Database host (e.g., 'localhost' or 'db.example.com')"),
+    port: int = Field(description="Database port", default=5432),
+    database: str = Field(description="Database name"),
+    user: str = Field(description="Database username"),
+    password: str = Field(description="Database password"),
+) -> dict[str, Any]:
+    """Save a new database connection profile."""
+    global _connections, _current_profile
+
+    load_connections()
+
+    _connections[profile_name] = {
+        "host": host,
+        "port": port,
+        "database": database,
+        "user": user,
+        "password": password,
+    }
+
+    save_connections()
+
+    # Auto-activate if this is the first connection
+    if _current_profile is None:
+        _current_profile = profile_name
+        return {
+            "status": "success",
+            "message": f"Connection '{profile_name}' saved and activated!",
+            "profile": profile_name,
+            "host": host,
+            "database": database,
+            "config_path": str(CONFIG_FILE),
+        }
+
+    return {
+        "status": "success",
+        "message": f"Connection '{profile_name}' saved. Use 'use_connection' to activate it.",
+        "profile": profile_name,
+        "host": host,
+        "database": database,
+        "config_path": str(CONFIG_FILE),
+    }
+
+
+@mcp.tool(
+    description="List all saved database connection profiles",
+    annotations=ToolAnnotations(title="List Connections", readOnlyHint=True),
+)
+def list_connections() -> dict[str, Any]:
+    """List all saved connection profiles."""
+    global _current_profile
+
+    load_connections()
+
+    if not _connections:
+        return {
+            "status": "empty",
+            "message": "No saved connections. Use 'save_connection' to add one.",
+            "connections": [],
+        }
+
+    profiles = []
+    for name, conn in _connections.items():
+        profiles.append(
+            {
+                "name": name,
+                "host": conn.get("host"),
+                "port": conn.get("port"),
+                "database": conn.get("database"),
+                "user": conn.get("user"),
+                "active": name == _current_profile,
+            }
+        )
+
+    return {
+        "status": "success",
+        "current_profile": _current_profile,
+        "connections": profiles,
+        "config_path": str(CONFIG_FILE),
+    }
+
+
+@mcp.tool(
+    description="Switch to a specific database connection profile",
+    annotations=ToolAnnotations(title="Use Connection"),
+)
+def use_connection(
+    profile_name: str = Field(description="Name of the connection profile to activate"),
+) -> dict[str, Any]:
+    """Activate a specific connection profile."""
+    global _current_profile
+
+    load_connections()
+
+    if profile_name not in _connections:
+        available = list(_connections.keys()) if _connections else []
+        return {
+            "status": "error",
+            "message": f"Profile '{profile_name}' not found.",
+            "available_profiles": available,
+        }
+
+    _current_profile = profile_name
+    conn = _connections[profile_name]
+
+    return {
+        "status": "success",
+        "message": f"Now using connection '{profile_name}'",
+        "profile": profile_name,
+        "host": conn.get("host"),
+        "database": conn.get("database"),
+    }
+
+
+@mcp.tool(
+    description="Delete a saved database connection profile",
+    annotations=ToolAnnotations(title="Delete Connection"),
+)
+def delete_connection(
+    profile_name: str = Field(description="Name of the connection profile to delete"),
+) -> dict[str, Any]:
+    """Delete a saved connection profile."""
+    global _current_profile
+
+    load_connections()
+
+    if profile_name not in _connections:
+        return {
+            "status": "error",
+            "message": f"Profile '{profile_name}' not found.",
+        }
+
+    del _connections[profile_name]
+    save_connections()
+
+    # If we deleted the active profile, clear it
+    if _current_profile == profile_name:
+        _current_profile = None
+        # Auto-select another profile if available
+        if _connections:
+            _current_profile = list(_connections.keys())[0]
+
+    return {
+        "status": "success",
+        "message": f"Profile '{profile_name}' deleted.",
+        "new_active_profile": _current_profile,
+    }
+
+
+@mcp.tool(
+    description="Show the currently active database connection",
+    annotations=ToolAnnotations(title="Get Current Connection", readOnlyHint=True),
+)
+def get_current_connection() -> dict[str, Any]:
+    """Get information about the current active connection."""
+    global _current_profile
+
+    load_connections()
+
+    if _current_profile and _current_profile in _connections:
+        conn = _connections[_current_profile]
+        return {
+            "status": "success",
+            "profile": _current_profile,
+            "host": conn.get("host"),
+            "port": conn.get("port"),
+            "database": conn.get("database"),
+            "user": conn.get("user"),
+            "source": "saved_profile",
+        }
+
+    # Using environment variables
+    return {
+        "status": "success",
+        "profile": None,
+        "host": os.environ.get("PG_HOST", "localhost"),
+        "port": os.environ.get("PG_PORT", "5432"),
+        "database": os.environ.get("PG_DATABASE", "postgres"),
+        "user": os.environ.get("PG_USER", "postgres"),
+        "source": "environment_variables",
+        "hint": "No saved profile active. Use 'save_connection' to save credentials.",
+    }
+
+
+# ============================================================
+# DATABASE QUERY TOOLS
+# ============================================================
+
+
 @mcp.tool(
     description="Test database connection and return server information",
     annotations=ToolAnnotations(title="Test Connection", readOnlyHint=True),
@@ -68,11 +327,12 @@ async def test_connection() -> str:
     """Test the database connection and return server version."""
     try:
         result = await execute_query("SELECT version() as version")
+        profile_info = f" (profile: {_current_profile})" if _current_profile else ""
         if result:
-            return f"Connected successfully!\nServer: {result[0]['version']}"
-        return "Connected successfully!"
+            return f"Connected successfully{profile_info}!\nServer: {result[0]['version']}"
+        return f"Connected successfully{profile_info}!"
     except Exception as e:
-        return f"Connection failed: {str(e)}"
+        return f"Connection failed: {str(e)}\nHint: Use 'save_connection' to configure credentials or 'list_connections' to see available profiles."
 
 
 @mcp.tool(
@@ -368,13 +628,13 @@ async def search_objects(
 
 def main():
     """Main entry point for the MCP server."""
-    # Validate required environment variables
-    required_vars = ["PG_HOST", "PG_DATABASE", "PG_USER"]
-    missing = [var for var in required_vars if not os.environ.get(var)]
+    # Load saved connections on startup
+    load_connections()
 
-    if missing:
-        print(f"Warning: Missing environment variables: {', '.join(missing)}")
-        print("Using defaults: localhost/postgres/postgres")
+    # Auto-select first profile if available and no env vars set
+    global _current_profile
+    if _connections and not os.environ.get("PG_HOST"):
+        _current_profile = list(_connections.keys())[0]
 
     # Windows event loop compatibility
     if sys.platform == "win32":

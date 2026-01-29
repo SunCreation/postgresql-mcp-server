@@ -1,69 +1,61 @@
 # PostgreSQL MCP Server
 
-A Model Context Protocol (MCP) server for PostgreSQL databases. Allows AI agents to query databases, list tables, explore schemas, and execute SQL.
+A Model Context Protocol (MCP) server for PostgreSQL databases with **multi-connection profile management**.
 
 ## Features
 
-- **Connection Testing**: Verify database connectivity
+- **Multi-Connection Profiles**: Save and switch between multiple database connections
+- **Secure Credential Storage**: Credentials stored in `~/.config/postgresql-mcp/connections.json` with restricted permissions
 - **Schema Exploration**: List databases, schemas, tables, columns
-- **Index Information**: View table indexes and foreign keys
 - **Query Execution**: Run SELECT queries (read-only) or any SQL (with caution)
 - **Table Statistics**: Get row counts, sizes, and more
-- **Object Search**: Find tables, columns, or functions by name pattern
 
 ## Installation
 
 ### Using uvx (Recommended)
 
 ```bash
-uvx postgresql-mcp-server
+uvx --from git+https://github.com/SunCreation/postgresql-mcp-server postgresql-mcp-server
 ```
 
-### Using pip
+## Quick Start
 
-```bash
-pip install postgresql-mcp-server
+Once the MCP server is running, use these tools in conversation:
+
+### 1. First Time Setup
+```
+Save my database connection:
+- Profile name: production
+- Host: db.example.com
+- Port: 5432
+- Database: myapp
+- User: admin
+- Password: secretpass
 ```
 
-## Environment Variables
+### 2. Managing Multiple Connections
+```
+# List all saved connections
+"Show me my saved database connections"
 
-The server requires the following environment variables:
+# Switch to a different profile
+"Switch to the staging database"
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PG_HOST` | PostgreSQL host | `localhost` |
-| `PG_PORT` | PostgreSQL port | `5432` |
-| `PG_DATABASE` | Database name | `postgres` |
-| `PG_USER` | Database username | `postgres` |
-| `PG_PASSWORD` | Database password | (empty) |
+# Delete a profile
+"Delete the old-dev connection"
+```
+
+### 3. Querying
+```
+# After connection is set up
+"List all tables"
+"Describe the users table"
+"Run query: SELECT * FROM orders LIMIT 10"
+```
 
 ## OpenCode Configuration
 
-Add the following to your `opencode.json` or `opencode.jsonc`:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "postgresql": {
-      "type": "local",
-      "command": ["uvx", "postgresql-mcp-server"],
-      "enabled": true,
-      "environment": {
-        "PG_HOST": "your-database-host.com",
-        "PG_PORT": "5432",
-        "PG_DATABASE": "your_database",
-        "PG_USER": "your_username",
-        "PG_PASSWORD": "your_password"
-      }
-    }
-  }
-}
-```
-
-### Using with GitHub Package
-
-If you've published to GitHub, you can use:
+Add to your `opencode.json`:
 
 ```jsonc
 {
@@ -72,89 +64,80 @@ If you've published to GitHub, you can use:
     "postgresql": {
       "type": "local",
       "command": ["uvx", "--from", "git+https://github.com/SunCreation/postgresql-mcp-server", "postgresql-mcp-server"],
-      "enabled": true,
-      "environment": {
-        "PG_HOST": "localhost",
-        "PG_PORT": "5432",
-        "PG_DATABASE": "mydb",
-        "PG_USER": "myuser",
-        "PG_PASSWORD": "mypassword"
-      }
+      "enabled": true
     }
   }
 }
 ```
 
+**No environment variables needed!** Credentials are managed through conversation and stored securely.
+
 ## Available Tools
 
-### Connection & Info
+### Connection Management
 
-- **test_connection**: Test database connection and return server version
-- **list_databases**: List all databases in the PostgreSQL server
-- **list_schemas**: List all schemas in the current database
+| Tool | Description |
+|------|-------------|
+| `save_connection` | Save new DB credentials with a profile name |
+| `list_connections` | Show all saved connection profiles |
+| `use_connection` | Switch to a specific profile |
+| `delete_connection` | Remove a saved profile |
+| `get_current_connection` | Show which profile is active |
 
-### Table Operations
+### Database Operations
 
-- **list_tables**: List all tables in a schema
-- **describe_table**: Get detailed column information for a table
-- **get_indexes**: Get indexes for a table
-- **get_foreign_keys**: Get foreign key relationships for a table
-- **get_table_stats**: Get table statistics (row count, size)
+| Tool | Description |
+|------|-------------|
+| `test_connection` | Test if current connection works |
+| `list_databases` | List all databases |
+| `list_schemas` | List all schemas |
+| `list_tables` | List tables in a schema |
+| `describe_table` | Get column details |
+| `get_indexes` | Get table indexes |
+| `get_foreign_keys` | Get FK relationships |
+| `run_query` | Execute SELECT queries (read-only) |
+| `run_sql` | Execute any SQL (careful!) |
+| `get_table_stats` | Get table statistics |
+| `search_objects` | Search for tables/columns/functions |
 
-### Query Execution
+## Credential Storage
 
-- **run_query**: Execute a read-only SQL query (SELECT only)
-- **run_sql**: Execute any SQL statement (USE WITH CAUTION)
+Credentials are stored in:
+```
+~/.config/postgresql-mcp/connections.json
+```
 
-### Search
+The file has restricted permissions (600) so only you can read it.
 
-- **search_objects**: Search for tables, columns, or functions by name pattern
-
-## Usage Examples
-
-Once configured in OpenCode, you can ask the AI:
-
-- "Show me all tables in the public schema"
-- "Describe the users table"
-- "Run a query to get the top 10 orders"
-- "What indexes exist on the products table?"
-- "Search for columns containing 'email'"
+Example structure:
+```json
+{
+  "connections": {
+    "production": {
+      "host": "db.example.com",
+      "port": 5432,
+      "database": "myapp",
+      "user": "admin",
+      "password": "***"
+    },
+    "staging": {
+      "host": "staging-db.example.com",
+      "port": 5432,
+      "database": "myapp_staging",
+      "user": "dev",
+      "password": "***"
+    }
+  }
+}
+```
 
 ## Security Considerations
 
-- **run_sql** can execute any SQL including INSERT, UPDATE, DELETE, DROP. Use with caution.
-- Consider using a read-only database user for safer operations.
-- Never expose database credentials in public repositories.
-
-## Development
-
-### Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/SunCreation/postgresql-mcp-server.git
-cd postgresql-mcp-server
-
-# Install dependencies
-uv sync
-
-# Run locally
-uv run postgresql-mcp-server
-```
-
-### Testing
-
-```bash
-# Set environment variables
-export PG_HOST=localhost
-export PG_DATABASE=testdb
-export PG_USER=testuser
-export PG_PASSWORD=testpass
-
-# Run the server
-uv run postgresql-mcp-server
-```
+- Credentials are stored with file permissions `600` (owner read/write only)
+- Use read-only database users when possible
+- `run_sql` can execute any SQL - use with caution
+- Never share your `connections.json` file
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License
